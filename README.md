@@ -16,5 +16,4 @@ Install Visusl Studio 2015, available for free, from Microsoft. It contains all 
 
 
 # Submitting Changes:
-Submit all changes in plaintext with a file name and line numbers to project lead: james@leppek.us
-
+Submit all changes in plaintext with a file name and line numbers to project lead: jamesl@leppek.us 

@@ -7,6 +7,8 @@ This is an active build. Changes are frequent, and with them documentation chang
 
 NOTE: This program cannot enumerate all possible handle-to-windows on a target system. Use a program like Spy++ (Download from microsoft.) to locate the 
 handle to the graphical window you want to capture. 
+
+
 */
 
 #include "stdafx.h"
@@ -26,6 +28,9 @@ handle to the graphical window you want to capture.
 #include "Token_Manager.h"
 #include <queue>
 #include "Buffer_Adapter.h"
+#include "region_for_map.h"
+#include <random>
+#include <time.h>
 
 
 #ifdef _DEBUG
@@ -34,6 +39,16 @@ handle to the graphical window you want to capture.
 
 
 const int GLOBAL_DEBUG_MODE = 1; //global debug mode. set 1 to on
+
+
+
+//special vector escape argument numbers for the injector processes. Commands enclosed are NOT explicit, but escaped. 
+const int DELAY_ESCAPE_CODE = -1;
+const int MOUSE_ESCAPE_CODE = -2;
+const int MOUSE_RUNTIME_INJECT_CODE = -3;
+const int KEY_HOLD_PROXIMAL = -4; 
+const int KEY_HOLD_RELEASE_HOLD = -5; 
+const int IMAGE_SLICE_CAPTURE_CODE = -6; 
 
 
 CWinApp theApp; // The one and only application object
@@ -83,7 +98,48 @@ void symbolic_parser(std::unordered_map<long int, int>& rbg_hmap,
 	const std::vector<std::vector<int>>& red_table,
 	bool overwatch_state); 
 
-void pop_priority_queue(std::deque<Do_Object*>& unsorted_script_codes, const std::vector<Do_Object*>& do_scripts); 
+void pop_priority_queue(const Buffer_Adapter& screen_source, 
+	std::deque<Do_Object*>& unsorted_script_codes,
+	const std::vector<Do_Object*>& do_scripts,
+	INPUT& ipt,
+	HWND& hwnd,
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	std::unordered_map<std::string, region_for_map*> object_lookup_by_name);
+
+
+int load_script_list(std::string& file, std::unordered_map<std::string, std::vector<int>>& ksinject);
+
+std::vector<int> keystroke_vector_converter(std::string& cmdstr); 
+
+void script_to_keystroke(const Buffer_Adapter& screen_source,
+	INPUT& ipt,
+	HWND& hwnd,
+	const Do_Object* obj,
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	const std::unordered_map<std::string, region_for_map*>& string_to_region);
+
+void load_map_with_regions(std::vector<std::string>& object_ident_sequences, std::unordered_map<std::string, region_for_map*>& object_lookup_by_name); 
+
+
+void main_running_loop(std::unordered_map<long int, int>& rbg_hmap,
+	std::vector<Do_Object*>& action_objects,
+	const int overwatch_numeric_id,
+	Token_Manager& tk_mgr,
+	std::deque<Do_Object*>& unsorted_script_codes,
+	const std::vector<Token*>& numerical_order,
+	const std::vector<Token*>& execution_order,
+	Buffer_Adapter& screen,
+	std::deque<int>& hits_cache,
+	int* hits,
+	const std::vector<std::vector<int>>& blue_table,
+	const std::vector<std::vector<int>>& green_table,
+	const std::vector<std::vector<int>>& red_table,
+	INPUT& ipt,
+	HWND& hwnd,
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	std::unordered_map<std::string, region_for_map*> object_lookup_by_name
+); 
+
 
 int main()
 {
@@ -106,8 +162,8 @@ int main()
         {
 			//debugging purposes. 
 			//change to your test build file location. 
-			const std::string filepath = "C:\\Users\\JamesH\\Pictures\\Screenshots\\Crunchypack_map_mcft_mtable.txt";
-
+			const std::string filepath =				"C:\\Users\\JamesH\\Pictures\\Screenshots\\Stencilpack_tnd_pages.txt";
+			const std::string dbg_scriptpack_filepath = "C:\\Users\\JamesH\\Pictures\\Screenshots\\tnd_script.txt";
 
 			/*
 			Preallocation of variables to be defined with extracted stencilpack data. 
@@ -131,6 +187,7 @@ int main()
 			final_red_table.resize(256);
 
 			std::unordered_map<long int, int> rbg_hmap; //builds the RBG table as a hash
+
 
 			//if loadstatus nonzero, splash invalid file error and force to try again or abort 
 			int loadstatus = 1;
@@ -158,6 +215,51 @@ int main()
 				}
 			}
 			std::cout << "Pack load successful!" << '\n';
+
+			//Build the fast lookup map of object identifier name to object dimensions and coordinates. 
+			std::unordered_map<std::string, region_for_map*> object_lookup_by_name;
+			load_map_with_regions(identification_sequence, object_lookup_by_name);
+
+
+			//now get the script list file. 
+			int scriptpack_load_status = 1;
+			//the map of do script output strings to keystroke injections. 
+			std::unordered_map<std::string, std::vector<int>> keystroke_injection; 
+			std::string scriptpack_filepath;
+			while (scriptpack_load_status != 0) {
+				std::cout << "Enter the full path to the script builder file: ";
+				if (GLOBAL_DEBUG_MODE == 1) {
+					scriptpack_filepath = dbg_scriptpack_filepath;
+				}
+				else {
+					std::getline(std::cin, scriptpack_filepath);
+				}
+				scriptpack_load_status = load_script_list(scriptpack_filepath, keystroke_injection);
+				switch (scriptpack_load_status) {
+					case 0:
+						//successful loading code
+						break; 
+					case -1:
+						std::cout << "Could not find the file at the supplied path. \nBe sure to include the full file name and .txt extension. " << '\n';
+						break;
+					case -2:
+						std::cout << "The script file was found, but contained syntatical errors. Check the file again. " << '\n';
+						break; 
+					default:
+						std::cout << "An unspecified error occured while reading the script list. " << '\n';
+						break; 
+				}
+			}
+			std::cout << "Script load successful!" << '\n'; 
+
+
+			//SET UP VIRTUAL KEYBOARD
+			INPUT ipt;
+			ipt.type = INPUT_KEYBOARD;
+			ipt.ki.wScan = 0; // hardware scan code for key
+			ipt.ki.time = 0;
+			ipt.ki.dwExtraInfo = 0;
+
 
 
 			//prepare mock_items from a list of items a,a,grpID1, c,c,grpID1, b,b,grpID2
@@ -197,11 +299,6 @@ int main()
 			//could actually attatch callx cally parameters to do object. at symbolic parser build time. 
 			std::deque<Do_Object*> unsorted_script_codes;
 
-
-
-
-
-
 			/*
 			Add a function that grabs, updates, and caches the origin of the rectangle associated with the handle. Notify on movement or changes.
 			*/
@@ -210,7 +307,9 @@ int main()
 			std::wstring string_target_handle;
 			std::cout << "Enter the handle to the window of the screen you want to capture.\n";
 			if (GLOBAL_DEBUG_MODE == 1) {
-				string_target_handle = L"pseeditor";
+				//string_target_handle = L"pseeditor";
+				//string_target_handle = L"Notepad";
+				string_target_handle = L"PPTFrameClass";
 			}
 			else {
 				std::getline(std::wcin, string_target_handle);
@@ -235,27 +334,54 @@ int main()
 			screen_buffer.setStencilLength(stencilsize[0]); 
 			screen_buffer.setStencilHeight(stencilsize[1]);
 
-			//create a slice at each wp location. 
-			//C:\Users\JamesH\Pictures\Screenshots\out_ts.txt
-			file_from_slice_atf(screen_buffer, 930, 746, 100, 100);
 
-			symbolic_parser(rbg_hmap,
-				script_sequence,
-				overwatch_numerical_id,
-				tk_mgr,
-				unsorted_script_codes,
-				tk_mgr.access_numerical_order(),
-				tk_mgr.access_execution_order(),
-				screen_buffer,
-				hits_cache,
-				hits,
-				final_blue_table,
-				final_green_table,
-				final_red_table,
-				false);
+			//-------------------------------------------KEY INJECTOR SHORT CIRCUIT TEST
+			/*
+
+			Do_Object* d1 = new Do_Object(0, "a");
+			Do_Object* d2 = new Do_Object(0, "b");
+			d2->setx(1000);
+			d2->sety(500);
+			Do_Object* d3 = new Do_Object(0, "c");
 
 
-			pop_priority_queue(unsorted_script_codes, script_sequence);
+			script_to_keystroke(screen_buffer, ipt, hwnd, d2, keystroke_injection, object_lookup_by_name);
+			script_to_keystroke(screen_buffer, ipt, hwnd, d1, keystroke_injection, object_lookup_by_name);
+			//script_to_keystroke(ipt, hw, d3, keystroke_injection);
+
+			//Test image slice object.
+			region_for_map* mp = new region_for_map(0, 200, 100, 100, "R0");
+			object_lookup_by_name.emplace("R0", mp);
+
+			*/
+			//std::wstring hdl = L"Notepad";
+			//LPCWSTR hdd = hdl.c_str();
+			//HWND hw = FindWindow((hdd), NULL);
+
+
+			//-------------------------------------------KEY INJECTOR SHORT CIRCUIT TEST END
+
+
+			//Number of cycle runs. 
+			for (int i = 0; i < 3; ++i) {
+				main_running_loop(rbg_hmap,
+					script_sequence,
+					overwatch_numerical_id,
+					tk_mgr,
+					unsorted_script_codes,
+					tk_mgr.access_numerical_order(),
+					tk_mgr.access_execution_order(),
+					screen_buffer,
+					hits_cache,
+					hits,
+					final_blue_table,
+					final_green_table,
+					final_red_table,
+					ipt,
+					hwnd,
+					keystroke_injection,
+					object_lookup_by_name);
+			}
         }
     }
     else
@@ -267,7 +393,7 @@ int main()
 
 	system("pause"); 
     return nRetCode;
-}
+} 
 
 
 
@@ -364,7 +490,6 @@ void file_from_slice_atf(const Buffer_Adapter& screen_source, int cartesian_star
 	int client_start_x = screen_source.cartesian_to_screen_x(cartesian_startx);
 	int buffer_offset_to_start = (((client_start_y- ylength)*screen_source.rcClient.right) * 4 + client_start_x * 4);
 
-	client_start_y = 580; //need to get a csy closer to this...
 
 	//allocate space for the bitmap to be copied to for the file. Need to try-catch. 
 	BYTE* slice = new BYTE[(xlength * ylength)*4];
@@ -413,7 +538,17 @@ void file_from_slice_atf(const Buffer_Adapter& screen_source, int cartesian_star
 
 	DWORD dwBmpSize = (((bi.biWidth) * bi.biBitCount + 31) / 32) * 4 * bi.biHeight;
 
-	HANDLE hFile = CreateFile(L"sliced.bmp",
+	//randomized extension generator. 
+	std::random_device rd;
+	std::srand(rd());
+	int random_extension = rand() % 1000000;
+	std::wstring extension = std::to_wstring(random_extension); 
+
+	std::wstring file_name = L"slice" + extension + L".bmp"; 
+
+	LPCWSTR fname = file_name.c_str(); 
+
+	HANDLE hFile = CreateFile(fname,
 		GENERIC_WRITE,
 		0,
 		NULL,
@@ -489,7 +624,9 @@ int transform_plain_to_client_x(int scriptx, const RECT rcClient, int script_len
 
 int transform_plain_to_client_y(int scripty, const RECT rcClient, int script_height) {
 	//invert y then stretch the coordinate
-	int midpoint = rcClient.bottom / 2;
+
+	/* reversion
+		int midpoint = rcClient.bottom / 2;
 	int post_inversion = 0; 
 	if (scripty > midpoint) {
 		post_inversion = (midpoint - (midpoint - scripty));
@@ -502,13 +639,82 @@ int transform_plain_to_client_y(int scripty, const RECT rcClient, int script_hei
 	int stretched_y = (float)scripty*adjust_y;
 
 	return stretched_y; 
+	*/
+
+	int midpoint = rcClient.bottom / 2;
+
+	float adjust_y = (float)rcClient.bottom / (float)script_height;
+	int stretched_y = (float)scripty*adjust_y;
+
+	int post_inversion = 0;
+	if (stretched_y > midpoint) {
+		post_inversion = (midpoint - (stretched_y - midpoint));
+	}
+	else {
+		post_inversion = (midpoint + (midpoint - stretched_y));
+	}
+
+	return post_inversion;
 }
 
 
 
 
+/*
+MAIN RUNNING LOOP FUNCTION
+Takes the current screen objects bitmap memory and loads and appropriate Do_Objects into the unsorted queue
+The queue is then popped in order of script priority and the appropriate keystroke injection sequence is fired
+Then the buffer is updated. 
+*/
+void main_running_loop(std::unordered_map<long int, int>& rbg_hmap,
+	std::vector<Do_Object*>& action_objects,
+	const int overwatch_numeric_id,
+	Token_Manager& tk_mgr,
+	std::deque<Do_Object*>& unsorted_script_codes,
+	const std::vector<Token*>& numerical_order,
+	const std::vector<Token*>& execution_order,
+	Buffer_Adapter& screen,
+	std::deque<int>& hits_cache,
+	int* hits,
+	const std::vector<std::vector<int>>& blue_table,
+	const std::vector<std::vector<int>>& green_table,
+	const std::vector<std::vector<int>>& red_table,
+	INPUT& ipt,
+	HWND& hwnd,
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	std::unordered_map<std::string, region_for_map*> object_lookup_by_name
+) {
+
+	symbolic_parser(rbg_hmap,
+		action_objects,
+		overwatch_numeric_id,
+		tk_mgr,
+		unsorted_script_codes,
+		tk_mgr.access_numerical_order(),
+		tk_mgr.access_execution_order(),
+		screen,
+		hits_cache,
+		hits,
+		blue_table,
+		green_table,
+		red_table,
+		false);
 
 
+	pop_priority_queue(screen, unsorted_script_codes, action_objects, ipt, hwnd, ksinject, object_lookup_by_name);
+
+	/*
+	Forcibly reset all condition flags of all objects to 0 after the queue is popped or GETS will re-queue themselves. 
+	However, states now can no longer persist between frames.
+	Should frames be stateless? Or does each point need a if NOT [0,0] accompanying it?
+	For now, frames are stateless. This may change in the future. 
+	*/
+
+	//get access to token manager and flush all condition vectors. use execution order. 
+	tk_mgr.reset_all_condition_flags(); 
+
+	screen.update_buffer();
+}
 
 
 
@@ -760,7 +966,7 @@ int stencilpack_load(std::unordered_map<long int, int>& rbg_hmap,
 							}
 							else if (s == line.length()) {
 								image_id = std::stoi(temp);
-								rbg_hmap[hvalue] = image_id;
+								rbg_hmap[hvalue] = image_id; //I suspect this will result in a failure point. 
 								break;
 							}
 						}
@@ -997,6 +1203,46 @@ std::vector<std::vector<int>> parse_and_load_images(std::string& loadstring) {
 
 
 
+/*
+Using the object_ident_sequences vector as a source, create a map of string identifers to region_for_map structs for fast coordinate and dimension lookups, 
+*/
+void load_map_with_regions(std::vector<std::string>& object_ident_sequences, std::unordered_map<std::string, region_for_map*>& object_lookup_by_name) {
+	for (int i = 0; i < object_ident_sequences.size(); ++i) {
+		std::string temp = object_ident_sequences[i];
+		
+		std::string substr = "";
+		int cord_info[4] = { 0,0,1,1 };
+		int j = 0;
+		int cord_iter = 0;
+		
+		while (temp[j] != '(') {
+			substr += temp[j];
+			++j;
+		}
+		++j;
+		std::string subnum = "";
+		while (temp[j] != ')') {
+			if (temp[j] == ',') {
+				cord_info[cord_iter] = std::stoi(subnum);
+				++cord_iter; 
+				subnum.clear(); 
+			}
+			else {
+				subnum += temp[j];
+			}
+			++j;
+		}
+		cord_info[cord_iter] = std::stoi(subnum);
+
+		//create the region with dimensions. 
+		region_for_map* nr = new region_for_map(cord_info[0], cord_info[1], cord_info[2], cord_info[3], substr); 
+
+		//add the item to the map for fast dimension access by name
+		object_lookup_by_name.emplace(substr, nr); 
+	}
+}
+
+
 
 /*
 KEY COMPONENT
@@ -1020,7 +1266,7 @@ void symbolic_parser(std::unordered_map<long int, int>& rbg_hmap,
 	const std::vector<std::vector<int>>& red_table,
 	bool overwatch_state) {
 	if (overwatch_state == true) {
-		std::cout << "transject";
+		//std::cout << "transject";
 	}
 
 	for (int i = 0; i < execution_order.size(); ++i) {
@@ -1152,8 +1398,8 @@ void symbolic_parser(std::unordered_map<long int, int>& rbg_hmap,
 
 							//do a test over the ENTIRE region. True and break on first true. False only if all false. 
 							bool match_once = false;
-							for (int n = screenux; n <= screenlx; ++n) {
-								for (int o = screenuy; o <= screenly; ++o) {
+							for (int n = screenux; n <= screenux + screenlx; ++n) {
+								for (int o = screenuy; o <= screenuy + screenly; ++o) {
 									int cblue = screen.getColorAtChannel(n, o, 0);
 									int cgreen = screen.getColorAtChannel(n, o, 1);
 									int cred = screen.getColorAtChannel(n, o, 2);
@@ -1417,7 +1663,14 @@ int bgr_table_lookup(std::unordered_map<long int, int>& rbg_hmap,
 If all the conditions of an watchobjects trigger scripts are met, its action object is enqueue'd along with its priority.
 Calling this function performs all the actions of objects whose conditions were met in order of their priority. 
 */
-void pop_priority_queue(std::deque<Do_Object*>& unsorted_script_codes, const std::vector<Do_Object*>& do_scripts) {
+void pop_priority_queue(const Buffer_Adapter& screen_source, 
+	std::deque<Do_Object*>& unsorted_script_codes,
+	const std::vector<Do_Object*>& do_scripts,
+	INPUT& ipt, 
+	HWND& hwnd,
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	std::unordered_map<std::string, region_for_map*> object_lookup_by_name
+) {
 
 	struct compare_scripts {
 		bool operator() (Do_Object* const & obj1, Do_Object* const & obj2) const
@@ -1444,7 +1697,705 @@ void pop_priority_queue(std::deque<Do_Object*>& unsorted_script_codes, const std
 	while (!script_sorted_queue.empty()) {
 		//pop these to the intersystem cache
 		std::cout << script_sorted_queue.top()->getDoStr() << '\n';
+		script_to_keystroke(screen_source, ipt, hwnd, script_sorted_queue.top(), ksinject, object_lookup_by_name);
 		script_sorted_queue.pop();
 	}
 
+	//flush all the current iteration codes. they have been executed. 
+	unsorted_script_codes.clear(); 
+}
+
+
+
+
+/*
+Loads the keystroke injection list
+special character lsit
+use capital letters for special characters
+use #...# to specify a process hold in ms
+Special characters like 
+
+a E#50#F
+b RP#30#RE%934 112%
+c test
+
+*/
+int load_script_list(std::string& file_location, std::unordered_map<std::string, std::vector<int>>& ksinject) {
+	//lcalled with the script file
+
+	//try and open file, return -1 on fail & abourt
+	std::ifstream file(file_location, std::ios::in);
+
+	if (file.fail()) {
+		return -1; 
+	}
+	else {
+		try {
+			std::string reader = ""; 
+			while (!file.eof())
+			{
+				std::getline(file, reader);
+				if (reader.length() >= 3) {
+					int counter = 0;
+					std::string key = "";
+					while (reader[counter] != ' ' && counter < reader.length()) {
+						key += reader[counter];
+						++counter;
+					}
+					std::string ks_script = reader.substr(counter + 1, reader.length());
+					std::vector<int> result = keystroke_vector_converter(ks_script);
+					ksinject.emplace(key, result);
+				}
+			}
+			file.close();
+		}
+		catch (const std::exception& e) {
+			return -2;
+		}
+	}
+	return 0; 
+}
+
+
+/*
+Processes each individual string into a vector of keystroke arguments. 
+*/
+std::vector<int> keystroke_vector_converter(std::string& cmdstr) {
+	/*
+	Eventually compacted into a map that has 
+	DO argument - array of keystroke values to execute. 
+	a - 0x41,0x44,special negative value for delay/escape, raw value, negative again to resume, 0x55, 
+
+	Need to add a special subimage snapshot function: d @ snapshot the subimage at coordinates 
+	How to specify region coordinates if rectangle is not the caller?
+
+	d @/R1/
+	where d is output by the watchpoint and R1 is the call to the regions map to find the matching component. 
+	Extract dimensions
+	THEN a call to file slice is made. 
+
+	Also need a HOLD CNTL and then key for tabbing between browser panels. 
+
+	*/
+
+
+	std::vector<int> args_array; 
+
+	bool escaped = false; //entering special escaped sequences. escaped until find the matching brace. 
+	bool delay_args = false; //the numeric values are literal used for a delay in MS. Implicit 30 MS delay on all.
+
+	std::string escaped_substr = ""; //holds the temp numerical args for delays & clicks. 
+
+	for (int i = 0; i < cmdstr.length(); ++i) {
+		char assign = cmdstr[i];
+		switch (assign) {
+			case 'a':
+			{
+				int kcode = 0x41;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'b':
+			{
+				int kcode = 0x42;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'c':
+			{
+				int kcode = 0x43;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'd':
+			{
+				int kcode = 0x44;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'e':
+			{
+				int kcode = 0x45;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'f':
+			{
+				int kcode = 0x46;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'g':
+			{
+				int kcode = 0x47;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'h':
+			{
+				int kcode = 0x48;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'i':
+			{
+				int kcode = 0x49;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'j':
+			{
+				int kcode = 0x4A;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'k':
+			{
+				int kcode = 0x4B;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'l':
+			{
+				int kcode = 0x4C;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'm':
+			{
+				int kcode = 0x4D;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'n':
+			{
+				int kcode = 0x4E;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'o':
+			{
+				int kcode = 0x4F;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'p':
+			{
+				int kcode = 0x50;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'q':
+			{
+				int kcode = 0x51;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'r':
+			{
+				int kcode = 0x52;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 's':
+			{
+				int kcode = 0x53;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 't':
+			{
+				int kcode = 0x54;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'u':
+			{
+				int kcode = 0x55;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'v':
+			{
+				int kcode = 0x56;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'w':
+			{
+				int kcode = 0x57;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'x':
+			{
+				int kcode = 0x58;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'y':
+			{
+				int kcode = 0x59;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'z':
+			{
+				int kcode = 0x5A;
+				args_array.push_back(kcode);
+				break;
+			}
+
+			/*
+			numbers can be literal keys OR parts of a escaped argument. 
+			Escaped arguments are shunted to the special substring. 
+			*/
+			case '0': 
+			{
+				int kcode = 0x30;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '1': 
+			{
+				int kcode = 0x31;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '2': 
+			{
+				int kcode = 0x32;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '3':
+			{
+				int kcode = 0x33;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '4':
+			{
+				int kcode = 0x34;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '5':
+			{
+				int kcode = 0x35;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '6':
+			{
+				int kcode = 0x36;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '7':
+			{
+				int kcode = 0x37;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '8':
+			{
+				int kcode = 0x38;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+			case '9':
+			{
+				int kcode = 0x39;
+				if (escaped || delay_args) {
+					escaped_substr.push_back(assign);
+				}
+				else {
+					args_array.push_back(kcode);
+				}
+				break;
+			}
+
+				//special processing characters
+				/*
+				Delay, escape, arrows, mouse commands, numbers,
+				*/
+			case 'E':
+				//enter
+			{
+				int kcode = 0x0D;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'L':
+				//left mouse
+			{
+				int kcode = 0x01;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'R':
+				//right mouse
+			{
+				int kcode = 0x02;
+				args_array.push_back(kcode);
+				break;
+			}
+			case 'S':
+				//spacebar
+			{
+				int kcode = 0x20;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '/':
+				//escape number args
+				if (!escaped) {
+					args_array.push_back(MOUSE_ESCAPE_CODE); 
+					escaped = true; 
+				}
+				else {
+					args_array.push_back(std::stoi(escaped_substr));
+					args_array.push_back(MOUSE_ESCAPE_CODE);
+					escaped_substr.clear();
+					escaped = false;
+				}
+				break;
+			case ' ':
+				//break in mouse arguments 
+				args_array.push_back(std::stoi(escaped_substr));
+				escaped_substr.clear(); 
+				break;
+			case '#':
+				//delay of in milliseconds
+				if (!delay_args) {
+					args_array.push_back(DELAY_ESCAPE_CODE); 
+					delay_args = true; 
+				}
+				else {
+					args_array.push_back(std::stoi(escaped_substr)); 
+					args_array.push_back(DELAY_ESCAPE_CODE); 
+					escaped_substr.clear(); 
+					delay_args = false; 
+				}
+				break;
+			case 'T':
+				//tab 
+			{
+				int kcode = 0x09;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '<':
+				//arrow left
+			{
+				int kcode = 0x25;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '^':
+				//arrow up
+			{
+				int kcode = 0x26;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '>':
+				//arrow right
+			{
+				int kcode = 0x27;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '_':
+				//arrow down
+			{
+				int kcode = 0x27;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '*':
+				//Need to inject a mouse click at the trigger location.
+				//need to reserve two vector characters that will be resolved at runtime. 
+				args_array.push_back(MOUSE_RUNTIME_INJECT_CODE);
+				break;
+			case '@':
+				//IMAGE_SLICE_CAPTURE_CODE = -6;
+				// d @R1@ 
+				//used to call for IMAGE SLICE CAPTURE SNAPSHOT on R1 whose dimensions are extracted from snapshot.
+				//note that this way any point cal call for image capture, nt just rectangles. 
+
+				/*
+				Problem is args is an integer array. Is the hmap locked at this point?
+				If not, push back the integer value of the string that looks up the hmap value. 
+				*/
+				args_array.push_back(IMAGE_SLICE_CAPTURE_CODE);
+
+				try {
+					++i; 
+					while (cmdstr[i] != '@' && i < cmdstr.length()) {
+						args_array.push_back((int)cmdstr[i]);
+						++i; 
+					}
+				}
+				catch (...) {
+					//Unmatched escape. Auto insert. 
+				}
+
+				args_array.push_back(IMAGE_SLICE_CAPTURE_CODE);
+				break;
+			case 'C': {
+				//control key. 
+				int kcode = 0x11;
+				args_array.push_back(kcode);
+				break;
+			}
+			case '+':
+				//HOLD the next key until release is encountered. 
+				args_array.push_back(KEY_HOLD_PROXIMAL);
+				//engage held lock. 
+				break; 
+			case '%':
+				// release the most recently held key. 
+				args_array.push_back(KEY_HOLD_RELEASE_HOLD);
+				break; 
+		}
+
+		/*
+				if (!escaped && !delay_args) {
+			ipt.ki.wVk = kcode; // virtual-key code for the key
+			ipt.ki.dwFlags = 0; // 0 for key press
+			SendInput(1, &ipt, sizeof(INPUT)); //send event
+
+			//small delay to allow for chaining. 
+			Sleep(30); 
+
+			ipt.ki.dwFlags = KEYEVENTF_KEYUP; // KEYEVENTF_KEYUP for key release
+			SendInput(1, &ipt, sizeof(INPUT)); //send event. 
+		}
+		
+		*/
+	}
+
+	return args_array;
+}
+
+
+
+/*
+Pipeline locally to tessarect 
+*/
+void extract_ocr() {
+
+}
+
+
+/*
+Offload images to an OCR cluster
+*/
+void export_to_ftp() {
+
+}
+
+
+/*
+Takes the map of do-keystroke sequences and injects the sequences. 
+*/
+void script_to_keystroke(const Buffer_Adapter& screen_source, 
+	INPUT& ipt, 
+	HWND& hwnd, 
+	const Do_Object* obj, 
+	const std::unordered_map<std::string, std::vector<int>>& ksinject,
+	const std::unordered_map<std::string, region_for_map*>& string_to_region) {
+	//based on the pipeline argument, possibly injecting coordinates, perform the keystroke sequence.
+
+	bool special_injector_state = false; 
+	int special_injector_value = 0; 
+
+	int inject_click_values[2]; 
+	inject_click_values[0] = -1; 
+	inject_click_values[1] = -1; 
+	int inject_delay_value = 0; 
+
+	int delayed_key_code = 0; 
+
+	int a; 
+		int b; 
+
+	std::string extract_dimensions_key = ""; 
+	region_for_map* extract_dimensions_for_cap = nullptr; 
+
+	for (int i = 0; i < ksinject.at(obj->get_command()).size(); ++i) {
+		//execute keystrokes. 
+		if (ksinject.at(obj->get_command())[i] >= 0) {
+			if (special_injector_state) {
+				//handle special nonliteral sequences. redirect to temp holders. 
+				switch (special_injector_value) {
+					case DELAY_ESCAPE_CODE:
+						Sleep(ksinject.at(obj->get_command())[i]); 
+						break; 
+					case MOUSE_ESCAPE_CODE:
+						//the next two numbers are to be assigned to mouse holder
+						if (inject_click_values[0] == -1) {
+							inject_click_values[0] = ksinject.at(obj->get_command())[i]; 
+						}
+						else {
+							inject_click_values[1] = ksinject.at(obj->get_command())[i];
+						}
+						break; 
+					case MOUSE_RUNTIME_INJECT_CODE:
+						//should never occure. handled in one step when encountered. 
+						break; 
+					case KEY_HOLD_PROXIMAL:
+						//Set the key to be held and send this keystroke. 
+						delayed_key_code = ksinject.at(obj->get_command())[i]; 
+						ipt.ki.wVk = ksinject.at(obj->get_command())[i]; // virtual-key code for the key
+						ipt.ki.dwFlags = 0; // 0 for key press
+						SendInput(1, &ipt, sizeof(INPUT)); //send event
+						special_injector_state = false; 
+						break;
+					case IMAGE_SLICE_CAPTURE_CODE:
+						//need to build the lookup string. 
+						extract_dimensions_key += (char)ksinject.at(obj->get_command())[i];
+						break; 
+				}
+			}
+			else {
+				//bring the window to the front so keystrokes go to the active window of analysis
+				SetForegroundWindow(hwnd);
+
+				//if mouse, set position. 
+				if (inject_click_values[0] != -1 && inject_click_values[1] != -1) {
+					SetCursorPos(inject_click_values[0], inject_click_values[1]);
+					inject_click_values[0] = -1; 
+					inject_click_values[1] = -1; 
+				}
+
+
+				ipt.ki.wVk = ksinject.at(obj->get_command())[i]; // virtual-key code for the key
+				ipt.ki.dwFlags = 0; // 0 for key press
+				SendInput(1, &ipt, sizeof(INPUT)); //send event
+
+				ipt.ki.dwFlags = KEYEVENTF_KEYUP; // KEYEVENTF_KEYUP for key release
+				SendInput(1, &ipt, sizeof(INPUT)); //send event.
+
+				Sleep(30);  //small delay to allow for chaining.
+			}
+		}
+		else {
+			if (special_injector_state) {
+				switch (special_injector_value) {
+				case DELAY_ESCAPE_CODE:
+					//do nothing. 
+					break; 
+				case MOUSE_ESCAPE_CODE:
+
+					break; 
+				case MOUSE_RUNTIME_INJECT_CODE:
+
+					break;
+				case IMAGE_SLICE_CAPTURE_CODE:
+					//execute the image slice. 
+					if (string_to_region.find(extract_dimensions_key) != string_to_region.end()) {
+						extract_dimensions_for_cap = string_to_region.at(extract_dimensions_key);
+						//call file from slice atf.  it will handle inversions and shifting.  
+						//file_from_slice_atf(screen_source, int cartesian_startx, int cartesian_starty, int xlength, int ylength)
+						file_from_slice_atf(screen_source, extract_dimensions_for_cap->x,
+							extract_dimensions_for_cap->y,
+							extract_dimensions_for_cap->length,
+							extract_dimensions_for_cap->height);
+					}
+					break; 
+				}
+
+
+				special_injector_state = false; 
+				special_injector_value = 0; 
+				inject_click_values[0] = -1;
+				inject_click_values[1] = -1;
+				inject_delay_value = 0;
+				extract_dimensions_for_cap = nullptr;
+				extract_dimensions_key.clear(); 
+			}
+			else {
+				switch (ksinject.at(obj->get_command())[i]) {
+					case DELAY_ESCAPE_CODE:
+						special_injector_value = DELAY_ESCAPE_CODE;
+						special_injector_state = true;
+						break;
+					case MOUSE_ESCAPE_CODE:
+						special_injector_value = MOUSE_ESCAPE_CODE;
+						special_injector_state = true;
+						break;
+					case MOUSE_RUNTIME_INJECT_CODE:
+						//should not set special injector. 
+						inject_click_values[0] = screen_source.rcScreen.left + screen_source.stretch_x_only(obj->getx());
+						inject_click_values[1] = screen_source.rcScreen.bottom - screen_source.rcClient.bottom + screen_source.stretch_y_only(obj->gety()); //should be around 400...
+						break;
+					case KEY_HOLD_PROXIMAL:
+						//set lock & set key held code. The next key becomes the held key
+						special_injector_value = KEY_HOLD_PROXIMAL; 
+						special_injector_state = true;
+						break; 
+					case KEY_HOLD_RELEASE_HOLD:
+						//release the key down key. injector lock was already released when delayed_key_code was set. 
+						SetForegroundWindow(hwnd);
+						ipt.ki.wVk = delayed_key_code; // virtual-key code for the key
+						ipt.ki.dwFlags = KEYEVENTF_KEYUP; // KEYEVENTF_KEYUP for key release
+						SendInput(1, &ipt, sizeof(INPUT)); //send event.
+						break; 
+					case IMAGE_SLICE_CAPTURE_CODE:
+						//enable escaped lock. 
+						special_injector_state = true;
+						special_injector_value = IMAGE_SLICE_CAPTURE_CODE;
+						break; 
+				}
+			}
+		}
+	}
 }

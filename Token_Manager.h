@@ -33,6 +33,7 @@ public:
 	void build_execution_order(std::string&);
 	int token_count() const;
 	int getOverwatchNumeric() const;
+	void reset_all_condition_flags();
 	const std::vector<Token*>& access_execution_order() const;
 	const std::vector<Token*>& access_numerical_order() const;
 	const std::vector<Token*>& get_overwatch_points() const;

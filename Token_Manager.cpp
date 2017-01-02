@@ -197,6 +197,16 @@ int Token_Manager::getOverwatchNumeric() const
 	return overwatchID;
 }
 
+void Token_Manager::reset_all_condition_flags()
+{
+	//for every token in exe order, reset all internal flags to 0. 
+	for (int i = 0; i < tokens_execution_order.size(); ++i) {
+		for (int j = 0; j < tokens_execution_order[i]->get_condition_size(); ++j) {
+			tokens_execution_order[i]->set_condition_value(j, 0); 
+		}
+	}
+}
+
 const std::vector<Token*>& Token_Manager::access_execution_order() const
 {
 	return tokens_execution_order;

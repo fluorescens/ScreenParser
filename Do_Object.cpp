@@ -43,6 +43,12 @@ int Do_Object::gety() const
 	return callery;
 }
 
+std::string Do_Object::get_command() const
+{
+	return cmd; 
+}
+
+
 
 Do_Object::~Do_Object()
 {

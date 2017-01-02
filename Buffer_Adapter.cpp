@@ -152,20 +152,36 @@ int Buffer_Adapter::cartesian_to_screen_x(int scriptx) const
 
 int Buffer_Adapter::cartesian_to_screen_y(int scripty) const 
 {
-	//scale and mirror
+
+	/* Reversion 
 	int midpoint = rcClient.bottom / 2;
 	int post_inversion = 0;
 	if (scripty > midpoint) {
-		post_inversion = (midpoint - (scripty - midpoint));
+	post_inversion = (midpoint - (scripty - midpoint));
 	}
 	else {
-		post_inversion = (midpoint + (midpoint - scripty));
+	post_inversion = (midpoint + (midpoint - scripty));
 	}
 
 	float adjust_y = (float)rcClient.bottom / (float)stencil_height;
 	int stretched_y = (float)post_inversion*adjust_y;
+	
+	*/
+	//scale and mirror
+	int midpoint = rcClient.bottom / 2;
 
-	return stretched_y;
+	float adjust_y = (float)rcClient.bottom / (float)stencil_height;
+	int stretched_y = (float)scripty*adjust_y;
+
+	int post_inversion = 0;
+	if (stretched_y > midpoint) {
+		post_inversion = (midpoint - (stretched_y - midpoint));
+	}
+	else {
+		post_inversion = (midpoint + (midpoint - stretched_y));
+	}
+
+	return post_inversion;
 }
 
 void Buffer_Adapter::update_buffer()
@@ -174,7 +190,11 @@ void Buffer_Adapter::update_buffer()
 	int validation = revalidate_properties(); 
 	if (validation == 0) {
 		//same place, do fast update. 
-		update_buffer_no_change(); 
+		//update_buffer_no_change(); 
+		/*
+		No change method not working with subwindow handles like Photo or PPT. Use full revalidation until resolved. 
+		*/
+		update_properties_and_buffer();
 	}
 	else {
 		//rectangles or locations have moved. Need to test for resize and realloc buffer. 
@@ -324,7 +344,7 @@ void Buffer_Adapter::update_buffer_no_change()
 	//transfer memory from the source window HANDLE into the destination HANDLE
 	if (!BitBlt(c_hdcMemDC, //destination of transfer
 		0, 0, //destination rectangle start
-		rcClient.right - rcClient.left, rcClient.bottom - rcClient.top, //w and l of destination
+		rcClient.right, rcClient.top, //w and l of destination
 		c_hdcWindow, //source of transfer
 		0, 0, //source start
 		SRCCOPY)) //raster data for color transforming
@@ -367,6 +387,22 @@ void Buffer_Adapter::setStencilHeight(int y)
 BYTE * Buffer_Adapter::getRawBuffer() const
 {
 	return source;
+}
+
+int Buffer_Adapter::stretch_x_only(int clientx) const
+{
+	float adjust_x = (float)rcClient.right / (float)stencil_length;
+	int stretched_x = (float)clientx*adjust_x;
+
+	return stretched_x;
+}
+
+int Buffer_Adapter::stretch_y_only(int clienty) const
+{
+	float adjust_y = (float)rcClient.bottom / (float)stencil_height;
+	int stretched_y = (float)clienty*adjust_y;
+
+	return stretched_y; 
 }
 
 Buffer_Adapter::~Buffer_Adapter()

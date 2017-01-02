@@ -1,0 +1,4 @@
+greenbutton @R1@@R2@_#5000#
+donebutton @R4@^#3000#
+matchbutton *L#30000#
+nextbutton __#3000#

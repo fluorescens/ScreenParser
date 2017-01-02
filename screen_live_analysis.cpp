@@ -38,7 +38,7 @@ handle to the graphical window you want to capture.
 #endif
 
 
-const int GLOBAL_DEBUG_MODE = 1; //global debug mode. set 1 to on
+const int GLOBAL_DEBUG_MODE = 0; //global debug mode. set 1 to on
 
 
 

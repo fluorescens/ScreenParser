@@ -28,6 +28,13 @@ public:
 
 	//rectangle screen components. 
 	RECT rcClient;
+	RECT rcScreen; 
+
+	/*
+	Converts client window coordinates into desktop screen coordinates, 
+	*/
+	int stretch_x_only(int clientx) const; 
+	int stretch_y_only(int clienty) const;
 
 	~Buffer_Adapter();
 private:
@@ -36,7 +43,6 @@ private:
 	void update_properties_and_buffer(); //updates the window properties and buffer
 	void update_buffer_no_change(); //lightweight update to buffer if no resize has occured.
 
-	RECT rcScreen; //used in revalidation testing only. 
 
 	int stencil_length;
 	int stencil_height; 

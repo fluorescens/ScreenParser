@@ -20,6 +20,7 @@ public:
 	void sety(int);
 	int getx() const;
 	int gety() const;
+	std::string get_command() const; 
 	~Do_Object();
 private:
 	int priority;
